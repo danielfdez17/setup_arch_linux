@@ -613,6 +613,39 @@ run_nodejs_installer() {
 run_step 4 run_nodejs_installer
 STEP_DETAIL[4]="node/npm/pnpm ready"; draw_dashboard
 
+run_zsh_installer() {
+    local script_path="./setup/config/zsh.sh"
+    local ssh_port
+    local vm_user="${VM_SSH_USER:-dlesieur}"
+
+    [ -f "$script_path" ] || { echo "Missing: $script_path"; return 1; }
+
+    ssh_port=$P_SSH
+    [ -n "$ssh_port" ] || { echo "No SSH NAT forwarding rule found for VM"; return 1; }
+
+    local max_wait=120
+    local waited=0
+    while [ "$waited" -lt "$max_wait" ]; do
+        if ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=3 "${vm_user}@127.0.0.1" "echo ok" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    [ "$waited" -lt "$max_wait" ] || { echo "VM SSH did not become ready"; return 1; }
+
+    scp -P "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        "$script_path" "${vm_user}@127.0.0.1:/tmp/install_zsh.sh" || return 1
+
+    ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        "${vm_user}@127.0.0.1" "chmod +x /tmp/install_zsh.sh && bash /tmp/install_zsh.sh" || return 1
+}
+
+# Step 6 - Installing ZSH and Oh My Zsh is now part of the preseed script, so we can skip it here
+run_step 5 run_zsh_installer
+STEP_STATUS[5]="skip"; STEP_DETAIL[5]="configured in preseed"; draw_dashboard
+
 run_git_aliases() {
     local script_path="./setup/config/git.sh"
     local ssh_port=$P_SSH
@@ -644,9 +677,9 @@ run_git_aliases() {
         "${vm_user}@127.0.0.1" "git config --global user.name >/dev/null && git config --global user.email >/dev/null && test -f ~/.b2b_git_aliases && grep -Fq '.b2b_git_aliases' ~/.bashrc" || return 1
 }
 
-# Step 6 - Git aliases setup
-run_step 5 run_git_aliases
-STEP_DETAIL[5]="git profile applied"; draw_dashboard
+# Step 7 - Git aliases setup
+run_step 6 run_git_aliases
+STEP_DETAIL[6]="git profile applied"; draw_dashboard
 
 setup_host_ssh_config 2>/dev/null || true
 setup_vscode_remote_ssh 2>/dev/null || true
