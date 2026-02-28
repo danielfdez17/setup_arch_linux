@@ -26,6 +26,7 @@ alias gss='git status -s'
 alias gpr='git pull --rebase'
 alias gls='git ls-files'
 alias gconf='git config --global --edit'
+alias gm='git merge'
 EOF
 
 ensure_source_line() {
