@@ -103,9 +103,9 @@ crow() {
 }
 
 # ── Step tracking ────────────────────────────────────────────────────────────
-STEPS=("VirtualBox" "Preseeded ISO" "VM Setup" "VM Start" "Node.js" "Git Config")
-STEP_STATUS=("pending" "pending" "pending" "pending" "pending" "pending")
-STEP_DETAIL=("" "" "" "" "" "")
+STEPS=("VirtualBox" "Preseeded ISO" "VM Setup" "VM Start" "Node.js" "Zsh Setup" "Git Config")
+STEP_STATUS=("pending" "pending" "pending" "pending" "pending" "pending" "pending")
+STEP_DETAIL=("" "" "" "" "" "" "")
 DASHBOARD_LINES=0
 
 # Braille spinner (static frame per step — no background process)
@@ -617,6 +617,8 @@ run_zsh_installer() {
     local script_path="./setup/config/zsh.sh"
     local ssh_port
     local vm_user="${VM_SSH_USER:-dlesieur}"
+    local vm_sudo_pass_escaped
+    local VM_SUDO_PASS=temproot123
 
     [ -f "$script_path" ] || { echo "Missing: $script_path"; return 1; }
 
@@ -638,13 +640,50 @@ run_zsh_installer() {
     scp -P "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         "$script_path" "${vm_user}@127.0.0.1:/tmp/install_zsh.sh" || return 1
 
-    ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        "${vm_user}@127.0.0.1" "chmod +x /tmp/install_zsh.sh && bash /tmp/install_zsh.sh" || return 1
+    if [ -n "${VM_SUDO_PASS:-}" ]; then
+        vm_sudo_pass_escaped=${VM_SUDO_PASS//\'/\'"\'"\'}
+        ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${vm_user}@127.0.0.1" "chmod +x /tmp/install_zsh.sh && VM_SUDO_PASS='${vm_sudo_pass_escaped}' bash /tmp/install_zsh.sh" || return 1
+    else
+        ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${vm_user}@127.0.0.1" "chmod +x /tmp/install_zsh.sh && bash /tmp/install_zsh.sh" || return 1
+    fi
 }
 
-# Step 6 - Installing ZSH and Oh My Zsh is now part of the preseed script, so we can skip it here
-run_step 5 run_zsh_installer
-STEP_STATUS[5]="skip"; STEP_DETAIL[5]="configured in preseed"; draw_dashboard
+zsh_already_configured() {
+    local ssh_port=$P_SSH
+    local vm_user="${VM_SSH_USER:-dlesieur}"
+
+    [ -n "$ssh_port" ] || return 1
+
+    local max_wait=120
+    local waited=0
+    while [ "$waited" -lt "$max_wait" ]; do
+        if ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=3 "${vm_user}@127.0.0.1" "echo ok" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    [ "$waited" -lt "$max_wait" ] || return 1
+
+    ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=5 "${vm_user}@127.0.0.1" \
+        'zsh_path="$(command -v zsh 2>/dev/null)" \
+         && login_shell="$(getent passwd "$(id -un)" | cut -d: -f7)" \
+         && [ -n "$zsh_path" ] \
+         && [ -d "$HOME/.oh-my-zsh" ] \
+         && case "$login_shell" in */zsh) true;; *) false;; esac' >/dev/null 2>&1
+}
+
+# Step 6 - Zsh + Oh My Zsh setup in VM
+if zsh_already_configured; then
+    STEP_STATUS[5]="skip"; STEP_DETAIL[5]="already configured"; draw_dashboard
+else
+    run_step 5 run_zsh_installer
+    STEP_DETAIL[5]="zsh + oh-my-zsh ready"; draw_dashboard
+fi
 
 run_git_aliases() {
     local script_path="./setup/config/git.sh"
