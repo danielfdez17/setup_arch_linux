@@ -103,9 +103,9 @@ crow() {
 }
 
 # ── Step tracking ────────────────────────────────────────────────────────────
-STEPS=("VirtualBox" "Preseeded ISO" "VM Setup" "VM Start" "Node.js")
-STEP_STATUS=("pending" "pending" "pending" "pending" "pending")
-STEP_DETAIL=("" "" "" "" "")
+STEPS=("VirtualBox" "Preseeded ISO" "VM Setup" "VM Start" "Node.js" "Git Config")
+STEP_STATUS=("pending" "pending" "pending" "pending" "pending" "pending")
+STEP_DETAIL=("" "" "" "" "" "")
 DASHBOARD_LINES=0
 
 # Braille spinner (static frame per step — no background process)
@@ -612,8 +612,41 @@ run_nodejs_installer() {
 # Step 5 - Node.js / npm / pnpm
 run_step 4 run_nodejs_installer
 STEP_DETAIL[4]="node/npm/pnpm ready"; draw_dashboard
-# run_step 3 VBoxManage startvm "${VM_NAME}" --type gui
-# STEP_DETAIL[3]="installing..."; draw_dashboard
+
+run_git_aliases() {
+    local script_path="./setup/config/git.sh"
+    local ssh_port=$P_SSH
+    local vm_user="${VM_SSH_USER:-dlesieur}"
+
+    [ -f "$script_path" ] || { echo "Missing: $script_path"; return 1; }
+
+    [ -n "$ssh_port" ] || { echo "No SSH NAT forwarding rule found for VM"; return 1; }
+
+    local max_wait=120
+    local waited=0
+    while [ "$waited" -lt "$max_wait" ]; do
+        if ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=3 "${vm_user}@127.0.0.1" "echo ok" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    [ "$waited" -lt "$max_wait" ] || { echo "VM SSH did not become ready"; return 1; }
+
+    scp -P "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        "$script_path" "${vm_user}@127.0.0.1:/tmp/git.sh" || return 1
+
+    ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        "${vm_user}@127.0.0.1" "chmod +x /tmp/git.sh && bash /tmp/git.sh" || return 1
+
+    ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        "${vm_user}@127.0.0.1" "git config --global user.name >/dev/null && git config --global user.email >/dev/null && test -f ~/.b2b_git_aliases && grep -Fq '.b2b_git_aliases' ~/.bashrc" || return 1
+}
+
+# Step 6 - Git aliases setup
+run_step 5 run_git_aliases
+STEP_DETAIL[5]="git profile applied"; draw_dashboard
 
 setup_host_ssh_config 2>/dev/null || true
 setup_vscode_remote_ssh 2>/dev/null || true
