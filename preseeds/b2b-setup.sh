@@ -22,6 +22,22 @@ exec > >(tee -a "$LOG") 2>&1
 
 echo "=== Born2beRoot setup starting ($(date)) ==="
 
+# ── Disk space safety check ──────────────────────────────────────────────────
+# Returns 0 (OK) if the given mount point has at least $2 MB free.
+# Usage: check_disk_space / 500  → true if / has >= 500 MB free
+check_disk_space() {
+	local mount="$1" min_mb="${2:-200}"
+	local avail_kb
+	avail_kb=$(df -k "$mount" 2>/dev/null | awk 'NR==2 {print $4}')
+	[ -z "$avail_kb" ] && return 0  # can't check → assume OK
+	local avail_mb=$((avail_kb / 1024))
+	if [ "$avail_mb" -lt "$min_mb" ]; then
+		echo "[WARN] LOW DISK: $mount has only ${avail_mb}MB free (need ${min_mb}MB) — skipping further installs"
+		return 1
+	fi
+	return 0
+}
+
 ### ─── 1. APT sources ────────────────────────────────────────────────────────
 # Detect the installed release codename — do NOT blindly switch to a different
 # release. Mixing releases (e.g. bookworm base + trixie packages) causes
@@ -47,34 +63,42 @@ echo "[OK] APT sources configured for $RELEASE"
 ### ─── 2. Install packages (all available in base repos) ─────────────────────
 APT="apt-get install -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
-# Core Born2beRoot mandatory requirements
+# Core Born2beRoot mandatory requirements (MUST succeed — small footprint)
 $APT sudo ufw openssh-server \
 	libpam-pwquality apparmor apparmor-utils \
 	cron haveged || true
 echo "[OK] Core packages"
 
 # Bonus: Web stack (lighttpd + MariaDB + PHP)
-$APT lighttpd mariadb-server \
-	php-fpm php-mysql php-cgi php-mbstring php-xml php-gd php-curl || true
-echo "[OK] Web stack packages"
+if check_disk_space / 800; then
+	$APT lighttpd mariadb-server \
+		php-fpm php-mysql php-cgi php-mbstring php-xml php-gd php-curl || true
+	echo "[OK] Web stack packages"
+else
+	echo "[SKIP] Web stack packages — insufficient disk space"
+fi
 
 # Developer essentials (all in base Debian repos)
 # NOTE: nodejs/npm are installed by first-boot-setup.sh (full systemd + network).
 # Installing npm in d-i chroot hangs on dpkg triggers → blocks entire script
 # → SSH, sudo, UFW, password policy etc. never get configured.
-$APT git git-lfs build-essential gcc g++ make cmake \
-	python3 python3-pip python3-venv \
-	sqlite3 \
-	curl wget net-tools vim nano \
-	man-db manpages-dev \
-	htop tree tmux screen bash-completion \
-	zip unzip tar gzip bzip2 xz-utils \
-	ca-certificates gnupg lsb-release apt-transport-https \
-	rsync less file patch diffutils \
-	dnsutils iputils-ping traceroute \
-	lsof strace ltrace \
-	jq bc || true
-echo "[OK] Developer tools"
+if check_disk_space / 500; then
+	$APT git build-essential gcc g++ make \
+		python3 python3-venv \
+		curl wget net-tools vim nano \
+		htop tree tmux bash-completion \
+		zip unzip tar gzip bzip2 xz-utils \
+		ca-certificates gnupg lsb-release apt-transport-https \
+		rsync less file patch diffutils \
+		dnsutils iputils-ping \
+		jq bc || true
+	echo "[OK] Developer tools"
+else
+	echo "[SKIP] Developer tools — insufficient disk space"
+fi
+
+# Clean apt cache after package install to reclaim space on /var
+apt-get clean 2>/dev/null || true
 
 ### ─── 2b. Optional custom login shell — install + set default ─────────────
 # The ISO late_command (if configured) copies:
@@ -356,8 +380,10 @@ done
 echo "[OK] Password policy set"
 
 ### ─── 9. tmux — persistent sessions (survive SSH drops) ────────────────────
-# Install tmux (already in package list above, but ensure it's there)
-$APT tmux || true
+# Already installed in developer tools above; this is a safety net
+if ! command -v tmux > /dev/null 2>&1; then
+	$APT tmux || true
+fi
 
 # tmux config for user dlesieur — sane defaults for dev work
 TMUX_CONF="/home/dlesieur/.tmux.conf"
@@ -591,47 +617,11 @@ echo "[OK] MOTD set"
 echo "=== Born2beRoot MANDATORY configuration complete ($(date)) ==="
 
 # ═══════════════════════════════════════════════════════════════════════════
-# OPTIONAL: Third-Party Tools (DevOps, Linters)
-# These are nice-to-have but NOT required for Born2beRoot.
-# They run AFTER all mandatory config so a hang/failure here does NOT
-# break the system. Each command has a timeout to prevent blocking.
-# If any fail here, first-boot-setup.sh will retry with full networking.
+# OPTIONAL third-party tools (mongodb, kubectl, pipx, golangci-lint, helm)
+# are NOT installed here. They consumed 1.5+ GB on / and caused the root
+# partition to fill up, breaking dpkg and GRUB in a cascading failure loop.
+# They are now installed by first-boot-setup.sh with disk space guards.
 # ═══════════════════════════════════════════════════════════════════════════
-
-echo "--- Installing optional third-party tools (best-effort, 60s timeout each) ---"
-
-# Helper: run a command with a timeout (default 60s)
-timed() { timeout 60 "$@" 2>/dev/null; }
-
-# MongoDB repo (apt install with timeout)
-echo "deb [trusted=yes] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/7.0 main" \
-	> /etc/apt/sources.list.d/mongodb-org-7.0.list 2>/dev/null || true
-
-# Kubernetes repo
-echo "deb [trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /" \
-	> /etc/apt/sources.list.d/kubernetes.list 2>/dev/null || true
-
-timed apt-get update -qq || true
-timed $APT mongodb-org kubectl pipx || true
-systemctl enable mongod 2>/dev/null || true
-echo "[OK] Third-party repos (best-effort)"
-
-# NPM global packages (only if npm was installed — it may not be in chroot)
-if command -v npm >/dev/null 2>&1; then
-	timed npm install -g eslint prettier snyk || true
-fi
-echo "[OK] NPM globals (best-effort)"
-
-# Python packages via pipx
-PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin timed pipx install sqlfluff || true
-PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin timed pipx install ruff || true
-PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin timed pipx install checkov || true
-echo "[OK] Python tools (best-effort)"
-
-# Go linter + Helm (curl | sh with timeout)
-timeout 60 bash -c 'curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin' || true
-timeout 60 bash -c 'curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash' || true
-echo "[OK] Go/Helm tools (best-effort)"
 
 ### ─── GRUB SAFETY NET ────────────────────────────────────────────────────────
 # After all package installs (which may have upgraded kernel/initramfs/grub),

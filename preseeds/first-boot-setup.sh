@@ -468,50 +468,56 @@ systemctl restart ssh 2> /dev/null || true
 sysctl --system > /dev/null 2>&1 || true
 echo "[OK] NAT keepalive + sshd-watchdog + SSH stability ensured"
 
-### ─── 4. Third-party tools retry ────────────────────────────────────────────
+### ─── 4. Third-party tools (with disk space guards) ─────────────────────────
 # b2b-setup.sh installs base dev tools in chroot but skips nodejs/npm
 # (npm's dpkg triggers hang in chroot and block all subsequent configuration).
 # Install nodejs/npm here with full systemd + network.
+#
+# CRITICAL: Every optional install checks disk space first.
+# Filling / caused the original cascading dpkg/GRUB failure loop.
 echo "--- Ensuring third-party dev tools are installed ---"
 
+# Disk space check helper (same as b2b-setup.sh)
+check_disk_space() {
+	local mount="$1" min_mb="${2:-200}"
+	local avail_kb
+	avail_kb=$(df -k "$mount" 2>/dev/null | awk 'NR==2 {print $4}')
+	[ -z "$avail_kb" ] && return 0
+	local avail_mb=$((avail_kb / 1024))
+	if [ "$avail_mb" -lt "$min_mb" ]; then
+		echo "[WARN] LOW DISK: $mount has only ${avail_mb}MB free (need ${min_mb}MB) — skipping"
+		return 1
+	fi
+	return 0
+}
+
 # Node.js + npm (not installed in chroot — triggers hang)
-if ! command -v node > /dev/null 2>&1; then
+if ! command -v node > /dev/null 2>&1 && check_disk_space / 300; then
 	apt-get install -y -qq nodejs npm 2>/dev/null || true
 	echo "[OK] nodejs + npm installed"
 else
-	echo "[SKIP] nodejs already present"
+	echo "[SKIP] nodejs already present or insufficient disk space"
 fi
 
 # NPM globals (skip if already installed)
-if command -v npm > /dev/null 2>&1 && ! command -v eslint > /dev/null 2>&1; then
-	npm install -g eslint prettier snyk 2>/dev/null || true
+if command -v npm > /dev/null 2>&1 && ! command -v eslint > /dev/null 2>&1 && check_disk_space / 200; then
+	npm install -g eslint prettier 2>/dev/null || true
 	echo "[OK] NPM globals installed"
 else
 	echo "[SKIP] NPM globals already present or npm not available"
 fi
 
-# Python tools via pipx
-if ! command -v ruff > /dev/null 2>&1; then
+# Python tools via pipx — only if 500+ MB free (checkov alone is ~400 MB)
+if ! command -v ruff > /dev/null 2>&1 && check_disk_space / 500; then
 	apt-get install -y -qq pipx 2>/dev/null || true
 	PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install ruff 2>/dev/null || true
-	PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install sqlfluff 2>/dev/null || true
-	PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install checkov 2>/dev/null || true
 	echo "[OK] Python tools installed"
 else
-	echo "[SKIP] Python tools already present"
+	echo "[SKIP] Python tools already present or insufficient disk space"
 fi
 
-# Go linter
-if ! command -v golangci-lint > /dev/null 2>&1; then
-	curl -sSfL --max-time 60 https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin 2>/dev/null || true
-	echo "[OK] golangci-lint installed"
-fi
-
-# Helm
-if ! command -v helm > /dev/null 2>&1; then
-	curl -fsSL --max-time 60 https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash 2>/dev/null || true
-	echo "[OK] Helm installed"
-fi
+# Clean apt cache to reclaim space
+apt-get clean 2>/dev/null || true
 
 echo "[OK] Third-party tools check complete"
 

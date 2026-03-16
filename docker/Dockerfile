@@ -51,7 +51,17 @@ build_hellish() {
 	# Initialize vendor submodules (e.g. libft) if they weren't pulled on the host.
 	if command -v git > /dev/null 2>&1 && [ -f ".gitmodules" ]; then
 		echo "[init] Initializing submodules in $BUILD_DIR ..."
+		git config --global --add safe.directory "$BUILD_DIR" 2>/dev/null || true
 		git submodule update --init --recursive 2>&1 || true
+	fi
+	# CRITICAL: The host (e.g. Arch Linux) may have pre-built artifacts on the
+	# volume mount. Those binaries are linked against the HOST's glibc/readline
+	# and will crash inside this Debian container (ABI mismatch causes ~90 TB
+	# mmap → "Out of space" infinite loop). Always clean and rebuild from source
+	# so the binary is linked against THIS container's libraries.
+	if [ -f "$BUILD_DIR/build/bin/hellish" ]; then
+		echo "[init] Cleaning host build artifacts (ABI mismatch prevention)..."
+		make fclean 2>&1 | tail -5 || true
 	fi
 	# OPT=1: use release flags (-O3) instead of -fsanitize=address,leak which
 	# require libasan that is not installed in this container image.
