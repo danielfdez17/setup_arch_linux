@@ -101,6 +101,37 @@ for SCRIPT in b2b-setup.sh monitoring.sh first-boot-setup.sh; do
 	fi
 done
 
+# Optional: bake a custom login shell into the ISO.
+# Usage:
+#   CUSTOM_SHELL_PATH=sh42/build/bin/hellish make gen_iso
+# If not provided, the VM keeps the default /bin/bash.
+CUSTOM_SHELL_PATH="${CUSTOM_SHELL_PATH:-}"
+if [ -n "$CUSTOM_SHELL_PATH" ]; then
+	echo "Copying custom shell to ISO root..."
+	if [ ! -f "$CUSTOM_SHELL_PATH" ]; then
+		echo "Error: CUSTOM_SHELL_PATH points to a missing file: $CUSTOM_SHELL_PATH" >&2
+		exit 1
+	fi
+	CUSTOM_SHELL_NAME="${CUSTOM_SHELL_NAME:-$(basename "$CUSTOM_SHELL_PATH")}"
+	CUSTOM_SHELL_DEST="${CUSTOM_SHELL_DEST:-/usr/bin/$CUSTOM_SHELL_NAME}"
+
+	cp "$CUSTOM_SHELL_PATH" "$ISO_DIR/custom_shell.bin"
+	chmod 755 "$ISO_DIR/custom_shell.bin" || true
+	printf '%s\n' "$CUSTOM_SHELL_DEST" > "$ISO_DIR/custom_shell.dest"
+	printf '%s\n' "$CUSTOM_SHELL_NAME" > "$ISO_DIR/custom_shell.name"
+	echo "  ✓ custom shell baked: $CUSTOM_SHELL_PATH"
+	echo "    dest: $CUSTOM_SHELL_DEST"
+	# Optional: include the register script for parity with your Makefile
+	REGISTER_SCRIPT="sh42/vendor/scripts/register_shell.sh"
+	if [ -f "$REGISTER_SCRIPT" ]; then
+		cp "$REGISTER_SCRIPT" "$ISO_DIR/register_shell.sh"
+		chmod 755 "$ISO_DIR/register_shell.sh" || true
+		echo "  ✓ register_shell.sh"
+	fi
+else
+	echo "ℹ CUSTOM_SHELL_PATH not set — keeping default shell (bash)"
+fi
+
 # Copy host's SSH public key into the ISO so b2b-setup.sh can install it
 # This enables passwordless SSH from the host right after first boot
 echo "Injecting host SSH public key..."

@@ -76,6 +76,43 @@ $APT git git-lfs build-essential gcc g++ make cmake \
 	jq bc || true
 echo "[OK] Developer tools"
 
+### ─── 2b. Optional custom login shell — install + set default ─────────────
+# The ISO late_command (if configured) copies:
+#   /cdrom/custom_shell.bin  -> /target/tmp/custom_shell.bin
+#   /cdrom/custom_shell.dest -> /target/tmp/custom_shell.dest
+# Since this script runs via in-target, these paths are under /tmp/.
+CUSTOM_SHELL_BIN="/tmp/custom_shell.bin"
+CUSTOM_SHELL_DEST_FILE="/tmp/custom_shell.dest"
+
+if [ -f "$CUSTOM_SHELL_BIN" ] && [ -f "$CUSTOM_SHELL_DEST_FILE" ]; then
+	CUSTOM_SHELL_DEST=$(head -n1 "$CUSTOM_SHELL_DEST_FILE" 2>/dev/null | tr -d '\r\n')
+	if [ -z "$CUSTOM_SHELL_DEST" ]; then
+		echo "[WARN] custom_shell.dest is empty — skipping custom shell"
+	elif echo "$CUSTOM_SHELL_DEST" | grep -Eq '^/usr/(local/)?bin/[A-Za-z0-9._+-]+$'; then
+		install -m 755 "$CUSTOM_SHELL_BIN" "$CUSTOM_SHELL_DEST" 2>/dev/null || cp "$CUSTOM_SHELL_BIN" "$CUSTOM_SHELL_DEST"
+		chmod 755 "$CUSTOM_SHELL_DEST" 2>/dev/null || true
+
+		# Register the shell so chsh/usermod accepts it
+		if [ -f /etc/shells ]; then
+			grep -qxF "$CUSTOM_SHELL_DEST" /etc/shells || echo "$CUSTOM_SHELL_DEST" >> /etc/shells
+		else
+			echo "$CUSTOM_SHELL_DEST" > /etc/shells
+		fi
+
+		# Set default shell for the main user created by preseed
+		if id dlesieur > /dev/null 2>&1; then
+			usermod -s "$CUSTOM_SHELL_DEST" dlesieur 2>/dev/null || chsh -s "$CUSTOM_SHELL_DEST" dlesieur 2>/dev/null || true
+			echo "[OK] Custom shell installed and set as default for dlesieur: $CUSTOM_SHELL_DEST"
+		else
+			echo "[WARN] User dlesieur not found — custom shell installed but not set as default"
+		fi
+	else
+		echo "[WARN] custom shell dest looks unsafe ($CUSTOM_SHELL_DEST) — skipping"
+	fi
+else
+	echo "[OK] No custom shell payload provided — keeping default shell (bash)"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════
 # BORN2BEROOT MANDATORY CONFIGURATION
 # Everything below MUST succeed — no network downloads, no external deps.

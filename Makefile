@@ -21,6 +21,11 @@ DISK_DIR     := disk_images
 RM           := rm -rf
 VMS_ISO_TAR  := vms_iso.tar
 
+# Optional: set a custom default login shell inside the VM.
+# Example:
+#   make gen_iso CUSTOM_SHELL_PATH=sh42/build/bin/hellish
+CUSTOM_SHELL_PATH ?=
+
 # Colours (portable — works in bash/dash/zsh)
 C_RESET  := \033[0m
 C_BOLD   := \033[1m
@@ -146,7 +151,7 @@ fix_hwe:
 
 # =========@@ Build preseeded ISO @@============================================
 gen_iso:
-	@bash $(ISO_BUILDER)
+	@CUSTOM_SHELL_PATH="$(CUSTOM_SHELL_PATH)" bash $(ISO_BUILDER)
 
 # =========@@ Create the VM @@==================================================
 setup_vm:
