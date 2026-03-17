@@ -32,6 +32,9 @@ restart:
 
 rebuild:
 	$(COMPOSE) down
+	@echo "[docker] Pruning stale images, build cache and volumes to free disk space..."
+	@docker system prune -af --volumes 2>/dev/null || true
+	@echo "[docker] Disk available before build: $$(df -h /var/lib/docker 2>/dev/null | awk 'NR==2{print $$4}' || df -h / | awk 'NR==2{print $$4}')"
 	$(COMPOSE) build --no-cache
 	$(COMPOSE) up -d
 
