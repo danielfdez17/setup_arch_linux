@@ -41,7 +41,7 @@ Requires=ssh.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/sshd-watchdog.sh
+ExecStart=/bin/bash /usr/local/bin/sshd-watchdog.sh
 Restart=always
 RestartSec=5
 
