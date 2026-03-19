@@ -26,10 +26,12 @@ VMS_ISO_TAR  := vms_iso.tar
 FORCE_ISO ?= 0
 
 # Optional: set a custom default login shell inside the VM.
-# Default keeps /bin/bash (no custom shell payload injected).
-# To set hellish explicitly:
-#   make gen_iso CUSTOM_SHELL_PATH=sh42/build/bin/hellish
-CUSTOM_SHELL_PATH ?=
+# Default is hellish from the sh42 submodule build.
+# To keep bash, override with an empty value:
+#   make gen_iso CUSTOM_SHELL_PATH=
+CUSTOM_SHELL_PATH ?= sh42/build/bin/hellish
+# Note: once connected to the VM via SSH, you can change the default shell for the user (e.g. dlesieur) with:
+# sudo usermod -s /bin/bash dlesieur && getent passwd dlesieur
 
 # Normalize to absolute path so ISO builder works from any cwd.
 ifneq ($(strip $(CUSTOM_SHELL_PATH)),)
